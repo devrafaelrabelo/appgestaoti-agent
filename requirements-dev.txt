@@ -1,0 +1,7 @@
+pytest
+pytest-asyncio
+respx
+anyio
+# se quiser http2 no dev, habilite:
+# httpx[http2]
+httpx[http2]
