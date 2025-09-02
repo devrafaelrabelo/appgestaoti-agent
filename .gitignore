@@ -1,0 +1,63 @@
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribuição / empacotamento
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+*.manifest
+*.spec
+
+# Virtualenvs
+.venv/
+env/
+venv/
+ENV/
+env.bak/
+
+# Logs e cache
+*.log
+*.tmp
+*.bak
+*.swp
+.DS_Store
+Thumbs.db
+
+# pytest / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.cache/
+
+# mypy / type checkers
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# coverage reports
+*.cover
+*.coverage
+*.coveragerc
+
+# =========================
+# IDEs / ferramentas
+# =========================
+.vscode/
+.idea/
+*.iml
+
+# =========================
+# Arquivos de sistema
+# =========================
+desktop.ini
+
+# Inno Setup outputs
+Output/
+*.iss.bak
