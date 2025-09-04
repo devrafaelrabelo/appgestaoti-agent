@@ -1,1 +1,5 @@
+typer
+pydantic
 httpx
+psutil
+cryptography
