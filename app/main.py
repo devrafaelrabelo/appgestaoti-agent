@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import sys
+import logging
 from typing import Callable, Tuple
+
+from app.core import logging_conf
 
 EXIT_OK = 0
 EXIT_FAIL = 1
@@ -32,9 +35,9 @@ def _run_step(name: str, fn: Callable[[], Tuple[bool, str]]) -> tuple[bool, str]
 def run_all() -> tuple[bool, str]:
     """
     Pipeline completo:
-      - Enroll (se não houver device_id OU access_token)
-      - Inventory (sempre)
-      - Metrics (sempre, batch=1)
+      - Enroll (se não houver device_id)
+      - Inventory
+      - Metrics (batch=1)
     """
     from app.core import config_win, state
     from app.workflows.enroll_flow import run as run_enroll
@@ -50,7 +53,6 @@ def run_all() -> tuple[bool, str]:
     if need_enroll:
         ok, msg = _run_step("enroll", run_enroll)
         steps.append(("enroll", ok, msg))
-        # recarrega state para etapas seguintes
         st = state.read_safe(cfg)
     else:
         steps.append(("enroll", True, "Pulado: já possui device_id e access_token"))
@@ -68,15 +70,18 @@ def run_all() -> tuple[bool, str]:
 
 
 def main(argv: list[str] | None = None) -> None:
+    logging_conf.setup(logging.INFO)
     argv = sys.argv[1:] if argv is None else argv
 
     # Sem argumentos → faz tudo
     if not argv or argv[0] in {"all", "*"}:
+        from app.core.config_win import load as _load
+        cfg = _load()
+        _print(f"== {cfg.agent_name} {cfg.agent_version} ==")
         ok, msg = run_all()
         _print(msg)
         sys.exit(EXIT_OK if ok else EXIT_FAIL)
 
-    # Específicos
     cmd = argv[0].lower()
 
     if cmd == "enroll":
@@ -105,7 +110,7 @@ def main(argv: list[str] | None = None) -> None:
             "  python -m app.main enroll          # apenas enroll\n"
             "  python -m app.main inventory       # apenas inventory\n"
             "  python -m app.main metrics [N]     # apenas metrics (opcional batch N)\n"
-            "\n* Enroll roda no 'faz tudo' se faltar device_id OU access_token."
+            "\n* Enroll roda no 'faz tudo' se faltar device_id."
         )
         sys.exit(EXIT_OK)
 
@@ -113,7 +118,7 @@ def main(argv: list[str] | None = None) -> None:
         try:
             from app.core.config_win import load as _load
             cfg = _load()
-            _print(f"{cfg.AGENT_NAME} {cfg.AGENT_VERSION}")
+            _print(f"{cfg.agent_name} {cfg.agent_version}")
         except Exception:
             _print("appgestaoti-agent")
         sys.exit(EXIT_OK)
