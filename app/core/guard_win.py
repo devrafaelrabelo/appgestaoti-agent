@@ -5,7 +5,9 @@ import ctypes
 import logging
 import os
 import sys
+import winreg
 from pathlib import Path
+from typing import Tuple
 
 
 def is_windows() -> bool:
@@ -75,3 +77,43 @@ def restart_as_admin() -> None:
     except Exception as e:
         logging.error("Não conseguiu reiniciar como admin: %s", e)
         sys.exit(1)
+
+def is_admin() -> bool:
+    """Retorna True se o processo atual tem privilégios de administrador."""
+    try:
+        return ctypes.windll.shell32.IsUserAnAdmin() != 0
+    except Exception:
+        return False
+
+
+def relaunch_as_admin():
+    """Reinicia o processo atual pedindo elevação UAC."""
+    if not is_admin():
+        params = " ".join([f'"{arg}"' for arg in sys.argv])
+        ctypes.windll.shell32.ShellExecuteW(
+            None, "runas", sys.executable, params, None, 1
+        )
+        sys.exit(0)
+
+
+def is_allowed_by_policy(cfg) -> Tuple[bool, str]:
+    """
+    Checa políticas locais que possam bloquear envio de dados.
+    Por padrão, sempre retorna True, mas pode ler registry futuramente.
+    """
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\RabeloTech\AppGestaoTI",
+            0,
+            winreg.KEY_READ,
+        ) as key:
+            val, _ = winreg.QueryValueEx(key, "BlockAgent")
+            if str(val).lower() in ("1", "true", "yes"):
+                return False, "Bloqueado por política local (BlockAgent=1)"
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass
+
+    return True, "Permitido"

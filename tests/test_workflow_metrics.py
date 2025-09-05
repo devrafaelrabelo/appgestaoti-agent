@@ -6,7 +6,7 @@ def test_metrics_flow_against_local(monkeypatch):
     monkeypatch.setenv("APP_BASE_URL", "http://127.0.0.1:8000")
 
     cfg = config_win.load()
-    st = state.AgentState(device_id="local-test", access_token="local-token")
+    st = state.AgentState(device_id="local-test", access_token="TESTE_LOCAL")
     state.write_safe(cfg, st)
 
     ok, msg = metrics_flow.run(batch=2)

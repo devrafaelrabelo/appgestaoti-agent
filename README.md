@@ -1,49 +1,73 @@
-# inicia o repo
-git init
-git add .
-git commit -m "chore(repo): initial empty repo"
+# AppGestaoTI Agent
 
-# cria develop
-git checkout -b develop
+Agente de telemetria e inventário para o sistema **AppGestaoTI**, desenvolvido pela **RabeloTech**.
 
-# ===== Sprint 1 =====
+O agente roda como **serviço do Windows** (via [WinSW](https://github.com/winsw/winsw)) e coleta periodicamente:
+- **Métricas** (CPU, memória, disco, processos, uptime, sessão de usuário ativo)
+- **Inventário** (hardware, rede, sistema operacional)
+- **Sessões ativas**
 
-# Commit 1: setup de tooling e testes
-git checkout -b feature/ci-and-tests develop
-git add requirements.txt requirements-dev.txt pytest.ini .gitignore
-git commit -m "chore(ci): add base tooling (pytest, respx) and deps"
+Os dados são enviados ao backend do AppGestaoTI através das rotas:
 
-# Commit 2: esqueleto do app (config/logging/entrypoint)
-git add run_appgestaoti.py appgestaoti_agent/__init__.py appgestaoti_agent/logging_config.py appgestaoti_agent/config.py
-git commit -m "feat(core): add entrypoint, logging setup and TOML config loader"
+- `POST /api/telemetry/enroll`
+- `POST /api/telemetry/inventory`
+- `POST /api/telemetry/metrics`
 
-# Commit 3: transporte http assíncrono + enrollment
-git add appgestaoti_agent/transport/http_client.py appgestaoti_agent/transport/enrollment.py
-git commit -m "feat(transport): AsyncClient with http2 fallback and enrollment call"
+---
 
-# Commit 4: storage e serviços (scheduler+agent)
-git add appgestaoti_agent/storage/device_store.py appgestaoti_agent/services/scheduler.py appgestaoti_agent/services/agent_service.py
-git commit -m "feat(agent): device store, scheduler loop (iterations), and AgentService"
+## 📦 Estrutura do Instalador
 
-# Commit 5: testes
-git add tests/conftest.py tests/test_transport.py tests/test_agent_service.py
-git commit -m "test: add respx/httpx tests for transport and agent service"
+O instalador único detecta a arquitetura do Windows e instala a versão correta do agente:
 
-# Push e PR
-git push -u origin feature/ci-and-tests
-# (abra PR: base=develop, compare=feature/ci-and-tests; após review → merge)
 
-# atualizar develop local
-git checkout develop
-git pull
 
-# (opcional) cortar release alpha
-git checkout -b release/0.1.0-alpha.1
-# se quiser editar CHANGELOG.md aqui, faça e comite:
-# git add CHANGELOG.md && git commit -m "docs(release): v0.1.0-alpha.1"
-git push -u origin release/0.1.0-alpha.1
-# abra PR base=main; após merge:
-git checkout main
-git pull
-git tag -a v0.1.0-alpha.1 -m "appgestaoti_agent 0.1.0-alpha.1"
-git push origin v0.1.0-alpha.1
+---
+
+## 🚀 Instalação
+
+1. Baixe o instalador **`AppGestaoTI-Agent-Setup.exe`**.
+2. Execute como **Administrador** (clique direito → *Executar como administrador*).
+3. O instalador vai:
+   - Copiar os binários corretos para a pasta destino.
+   - Registrar o serviço `AppGestaoTI Agent`.
+   - Iniciar o serviço automaticamente.
+
+---
+
+## ✅ Validação
+
+### 1. Verificar no **Services.msc**
+- Abra `services.msc`
+- Procure por **AppGestaoTI Agent**
+- O status deve estar **Em execução (Running)**
+
+### 2. Verificar via prompt
+```powershell
+sc query "appgestaoti-agent"
+
+
+
+
+appgestaoti-agent/
+├─ app/                     # código do agente
+│  ├─ core/
+│  ├─ daemon/
+│  ├─ system/
+│  ├─ workflows/
+│  ├─ cli/
+│  └─ ui_tray/
+│
+├─ tests/                   # <-- pasta de testes automatizados
+│  ├─ __init__.py
+│  ├─ test_core_state.py         # testa leitura/gravação do state
+│  ├─ test_core_http.py          # testa headers e clientes http
+│  ├─ test_workflow_enroll.py    # testa fluxo de enroll com mock de backend
+│  ├─ test_workflow_inventory.py # testa envio de inventário e deduplicação
+│  ├─ test_workflow_metrics.py   # testa envio de métricas
+│  ├─ test_system_inventory.py   # testa coleta de inventário (mock psutil/powershell)
+│  └─ test_system_metrics.py     # testa coleta de métricas
+│
+├─ installer/
+├─ requirements.txt
+├─ README.md
+└─ pyproject.toml / setup.cfg    # (opcional) configuração de build/lint/test

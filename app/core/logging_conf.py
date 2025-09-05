@@ -30,7 +30,7 @@ def setup(level: int = logging.INFO) -> None:
     cfg = load()
 
     # diretório de logs sempre em %ProgramData%
-    log_dir: Path = cfg.data_dir / "logs"
+    log_dir: Path = cfg.DATA_DIR / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / "agent.log"
 

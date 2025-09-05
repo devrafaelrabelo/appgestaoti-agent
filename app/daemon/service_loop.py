@@ -70,4 +70,80 @@ def _ensure_enrolled(log: logging.Logger, cfg, stop_after: Optional[int]) -> boo
             log.info("Pré-voo: enroll OK (device_id=%s).", getattr(st, "device_id", None))
             return True
 
-        log.war
+        log.warning("Pré-voo: enroll falhou: %s. Retentando em %.0fs", msg, backoff)
+        _sleep(backoff)
+        backoff = min(backoff * 2.0, max_backoff)
+        if stop_after is not None and (_now() - t_start) >= float(stop_after):
+            log.error("Pré-voo: timeout aguardando enroll.")
+            return False
+
+
+def run_forever(stop_after: Optional[int] = None) -> int:
+    """
+    Loop principal do agente:
+      - Pré-voo exige device_id + access_token (faz enroll se necessário).
+      - Executa metrics (default 60s) e inventory (default 86400s) com jitter.
+      - Se perder token/state, tenta re-enroll com backoff.
+    """
+    logging_conf.setup()
+    log = logging.getLogger("agent.service")
+    cfg = config_win.load()
+    random.seed()
+
+    if not _ensure_enrolled(log, cfg, stop_after):
+        return 1
+
+    st = state.read_safe(cfg)
+    METRICS_EVERY, INVENTORY_EVERY = _apply_policy(st, cfg)
+    log.info("Agente em loop. metrics=%ss inventory=%ss", METRICS_EVERY, INVENTORY_EVERY)
+
+    now = _now()
+    next_metrics = now + _jittered_delay(METRICS_EVERY, 0.05)
+    next_inventory = now + _jittered_delay(INVENTORY_EVERY, 0.05)
+
+    re_backoff = 5.0
+    re_backoff_max = 300.0
+    t0 = _now()
+
+    while True:
+        now = _now()
+
+        # Re-enroll se perdermos credenciais
+        st = state.read_safe(cfg)
+        if not (getattr(st, "device_id", None) and getattr(st, "access_token", None)):
+            ok, msg = do_enroll()
+            if ok:
+                log.info("Re-enroll OK: %s", msg)
+                re_backoff = 5.0
+                st = state.read_safe(cfg)
+                METRICS_EVERY, INVENTORY_EVERY = _apply_policy(st, cfg)
+                next_metrics = now + _jittered_delay(METRICS_EVERY, 0.05)
+                next_inventory = now + _jittered_delay(INVENTORY_EVERY, 0.05)
+            else:
+                log.warning("Re-enroll falhou: %s. Nova tentativa em %.0fs", msg, re_backoff)
+                _sleep(re_backoff)
+                re_backoff = min(re_backoff * 2.0, re_backoff_max)
+                if stop_after is not None and (_now() - t0) >= float(stop_after):
+                    log.info("Encerrando por stop_after=%s", stop_after)
+                    return 0
+                continue
+
+        # Metrics
+        if now >= next_metrics:
+            ok_m, msg_m = do_metrics(batch=1)
+            log.info("Metrics %s: %s", "OK" if ok_m else "erro", msg_m)
+            next_metrics = _now() + _jittered_delay(METRICS_EVERY, 0.1)
+
+        # Inventory
+        if now >= next_inventory:
+            ok_i, msg_i = do_inventory()
+            log.info("Inventory %s: %s", "OK" if ok_i else "erro", msg_i)
+            next_inventory = _now() + _jittered_delay(INVENTORY_EVERY, 0.1)
+
+        # Espera até o próximo evento
+        sleep_for = min(next_metrics, next_inventory) - _now()
+        _sleep(min(max(sleep_for, 0.5), 10.0))
+
+        if stop_after is not None and (_now() - t0) >= float(stop_after):
+            log.info("Encerrando por stop_after=%s", stop_after)
+            return 0
