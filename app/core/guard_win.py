@@ -1,56 +1,77 @@
 # app/core/guard_win.py
-import os, subprocess
-from urllib.parse import urlparse
+from __future__ import annotations
 
-def _ps(cmd: str) -> str | None:
+import ctypes
+import logging
+import os
+import sys
+from pathlib import Path
+
+
+def is_windows() -> bool:
+    return os.name == "nt"
+
+
+def ensure_single_instance(lock_name: str = "appgestaoti-agent") -> bool:
+    """
+    Garante que só exista uma instância desse processo.
+    Retorna True se conseguiu criar o lock, False se já existia outro.
+    No Windows usa CreateMutex; em outros sistemas usa um arquivo lock no tempdir.
+    """
+    if is_windows():
+        kernel32 = ctypes.windll.kernel32
+        mutex = kernel32.CreateMutexW(None, False, lock_name)
+        last_err = kernel32.GetLastError()
+        if last_err == 183:  # ERROR_ALREADY_EXISTS
+            logging.error("Outra instância já está em execução (mutex=%s)", lock_name)
+            return False
+        return True
+    else:
+        import tempfile
+
+        lock_file = Path(tempfile.gettempdir()) / f"{lock_name}.lock"
+        try:
+            if lock_file.exists():
+                logging.error("Outra instância já está em execução (lockfile=%s)", lock_file)
+                return False
+            lock_file.write_text(str(os.getpid()))
+            return True
+        except Exception as e:
+            logging.warning("Falha ao criar lockfile %s: %s", lock_file, e)
+            return True  # não bloqueia, apenas loga
+
+
+def require_admin() -> bool:
+    """
+    Verifica se o processo está rodando como administrador (elevado).
+    No Windows usa IsUserAnAdmin. Em POSIX verifica UID=0.
+    """
     try:
-        out = subprocess.check_output(
-            ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", cmd],
-            stderr=subprocess.DEVNULL, text=True
-        ).strip()
-        return out or None
+        if is_windows():
+            return ctypes.windll.shell32.IsUserAnAdmin() != 0
+        else:
+            return os.geteuid() == 0
     except Exception:
-        return None
-
-def current_domain() -> str | None:
-    return os.environ.get("USERDOMAIN") or _ps("(Get-CimInstance Win32_ComputerSystem).Domain")
-
-def is_domain_joined() -> bool:
-    val = _ps("(Get-CimInstance Win32_ComputerSystem).PartOfDomain")
-    if val is None:
         return False
-    return str(val).strip().lower() in ("true", "1")
 
-def host_from_url(url: str) -> str:
+
+def restart_as_admin() -> None:
+    """
+    Reinicia o processo atual como administrador (Windows).
+    Só chama se não tiver privilégios; bloqueante.
+    """
+    if not is_windows():
+        return
+
+    if require_admin():
+        return
+
     try:
-        return urlparse(url).hostname or ""
-    except Exception:
-        return ""
-
-def is_allowed_by_policy(cfg) -> tuple[bool, str]:
-    """
-    Verifica (1) HTTPS se exigido, (2) domínio permitido (se exigido), (3) host em allowlist (se configurado).
-    Retorna (allowed, motivo_ou_vazio).
-    """
-    # HTTPS
-    if cfg.ENFORCE_HTTPS and not str(cfg.BACKEND_URL).lower().startswith("https://"):
-        return False, "Política exige HTTPS e a URL atual não é HTTPS."
-
-    # Domínio
-    if cfg.REQUIRE_DOMAIN:
-        if not is_domain_joined():
-            return False, "Máquina não é membro de domínio e a política exige domínio."
-        allowed = [d.strip().upper() for d in cfg.ALLOWED_DOMAINS.split(";") if d.strip()]
-        if allowed:
-            dom = (current_domain() or "").upper()
-            if dom not in allowed:
-                return False, f"Domínio '{dom}' não está na allowlist."
-
-    # Host allowlist
-    hosts = [h.strip().lower() for h in cfg.ALLOWED_BACKEND_HOSTS.split(";") if h.strip()]
-    if hosts:
-        host = (host_from_url(cfg.BACKEND_URL) or "").lower()
-        if host not in hosts:
-            return False, f"Host '{host}' não está na allowlist."
-
-    return True, ""
+        params = " ".join(sys.argv[1:])
+        ctypes.windll.shell32.ShellExecuteW(
+            None, "runas", sys.executable, params, None, 1
+        )
+        sys.exit(0)
+    except Exception as e:
+        logging.error("Não conseguiu reiniciar como admin: %s", e)
+        sys.exit(1)

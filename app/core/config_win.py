@@ -1,82 +1,85 @@
-from pydantic import BaseModel
+# app/core/config_win.py
+from __future__ import annotations
+import os
+from dataclasses import dataclass
 from pathlib import Path
-import os, shutil
+import json
 
-class Cfg(BaseModel):
-    BACKEND_URL: str = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
-    ENROLL_PATH: str = os.getenv("ENROLL_PATH", "/api/agent/enroll")
-    METRICS_PATH: str = os.getenv("METRICS_PATH", "/api/agent/metrics")
-    INVENTORY_PATH: str = os.getenv("INVENTORY_PATH", "/api/agent/inventory")
-    ENROLLMENT_TOKEN: str = os.getenv("ENROLLMENT_TOKEN", "TESTE_LOCAL")
+@dataclass
+class Cfg:
+    base_url: str
+    metrics_path: str
+    enroll_path: str
+    inventory_path: str
+    data_dir: Path
+    enrollment_token: str
 
-    SCHEMA_VERSION: str = os.getenv("SCHEMA_VERSION", "1.0")
-    AGENT_NAME: str = os.getenv("AGENT_NAME", "appgestaoti-agent")
-    AGENT_VERSION: str = os.getenv("AGENT_VERSION", "0.1.0")
+    agent_name: str = "appgestaoti-agent"
+    agent_version: str = "0.1.0"
+    timeout_sec: int = 30
+    schema_version: str = "1.0"
 
-    DATA_DIR: Path = Path(os.getenv("DATA_DIR", r"%PROGRAMDATA%\RabeloTech\AppGestaoTI\agent"))
+    metrics_interval: int = 60       # padrão: 1 min
+    inventory_interval: int = 86400  # padrão: 24h
 
-    DEV_MODE: bool = os.getenv("DEV_MODE", "1") == "1"
-    ENFORCE_HTTPS: bool = os.getenv("ENFORCE_HTTPS", "0") == "1"
-    REQUIRE_DOMAIN: bool = os.getenv("REQUIRE_DOMAIN", "0") == "1"
-    ALLOWED_DOMAINS: str = os.getenv("ALLOWED_DOMAINS", "")
-    ALLOWED_BACKEND_HOSTS: str = os.getenv("ALLOWED_BACKEND_HOSTS", "")
+    @property
+    def norm_base_url(self) -> str:
+        return self.base_url.rstrip("/")
 
-    TIMEOUT_SEC: int = int(os.getenv("TIMEOUT_SEC", "15"))
-    KEY_TYPE: str = os.getenv("KEY_TYPE", "ed25519")
+    @property
+    def state_file(self) -> Path:
+        """Arquivo de state (device_id, access_token)."""
+        return self.data_dir / "state.json"
 
-def _expand_programdata(p: Path) -> Path:
-    s = str(p)
-    if s.startswith("%PROGRAMDATA%"):
-        base = os.environ.get("PROGRAMDATA", r"C:\ProgramData")
-        return Path(s.replace("%PROGRAMDATA%", base))
-    return p
+    @property
+    def queue_dir(self) -> Path:
+        """Fila offline para métricas/inventário."""
+        d = self.data_dir / "queue"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
 
-def _ensure_dirs(root: Path) -> None:
-    root.mkdir(parents=True, exist_ok=True)
-    (root / "keys").mkdir(parents=True, exist_ok=True)
-    (root / "logs").mkdir(parents=True, exist_ok=True)
 
-def _is_writable_dir(dirpath: Path) -> bool:
-    try:
-        dirpath.mkdir(parents=True, exist_ok=True)
-        test = dirpath / ".writetest"
-        test.write_text("x", encoding="utf-8")
-        test.unlink(missing_ok=True)
-        return True
-    except Exception:
-        return False
+def _default_data_dir() -> Path:
+    """
+    Resolve sempre para ProgramData (independente de x86/x64).
+    Em Windows 64-bit, {pf32} é usado para app, mas os dados ficam em %ProgramData%.
+    """
+    programdata = Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData"))
+    base = programdata / "RabeloTech" / "AppGestaoTI" / "agent"
+    base.mkdir(parents=True, exist_ok=True)
+    return base
 
-def _migrate_old_dirs(target: Path) -> None:
-    base = os.environ.get("PROGRAMDATA", r"C:\ProgramData")
-    candidates = [
-        Path(base) / "AppGestaoTI" / "agent",
-        Path(base) / "AppGestaoTI" / "agent_win",
-        Path(base) / "AppGestaoTI-agent",
-    ]
-    for old in candidates:
-        if old.exists() and old.resolve() != target.resolve():
-            src_state = old / "state.json"
-            if src_state.exists() and not (target / "state.json").exists():
-                shutil.move(str(src_state), str(target / "state.json"))
-            for name in ("keys", "logs"):
-                src = old / name
-                dst = target / name
-                if src.exists() and not dst.exists():
-                    shutil.move(str(src), str(dst))
 
-def resolve_data_dir(p: Path) -> Path:
-    # 1) Tenta ProgramData
-    pd = _expand_programdata(p)
-    if _is_writable_dir(pd):
-        _ensure_dirs(pd)
-        _migrate_old_dirs(pd)
-        return pd
-    # 2) Fallback: LOCALAPPDATA (user)
-    lad = Path(os.getenv("LOCALAPPDATA", str(Path.home() / "AppData/Local"))) / "RabeloTech" / "AppGestaoTI" / "agent"
-    _ensure_dirs(lad)
-    return lad
+def _load_local_override(cfg: Cfg) -> Cfg:
+    """
+    Permite sobrescrever configurações em agent.json
+    (útil para debug, override de intervalos etc.)
+    """
+    cfg_file = cfg.data_dir / "agent.json"
+    if cfg_file.exists():
+        try:
+            overrides = json.loads(cfg_file.read_text(encoding="utf-8"))
+            for k, v in overrides.items():
+                if hasattr(cfg, k):
+                    setattr(cfg, k, v)
+        except Exception as e:
+            # não quebra se o JSON estiver ruim
+            import logging
+            logging.warning("falha ao carregar override %s: %s", cfg_file, e)
+    return cfg
+
 
 def load() -> Cfg:
-    cfg = Cfg()
-    cfg.DATA_DIR = resolve_data_dir(cfg.DATA_DIR)
-    return cfg
+    base_url = os.environ.get("APP_BASE_URL", "http://127.0.0.1:8000")
+
+    cfg = Cfg(
+        base_url=base_url,
+        metrics_path=os.environ.get("APP_METRICS_PATH", "/api/telemetry/metrics"),
+        enroll_path=os.environ.get("APP_ENROLL_PATH", "/api/telemetry/enroll"),
+        inventory_path=os.environ.get("APP_INVENTORY_PATH", "/api/telemetry/inventory"),
+        data_dir=_default_data_dir(),
+        enrollment_token=os.environ.get("APP_ENROLLMENT_TOKEN", "TESTE_LOCAL"),
+        metrics_interval=int(os.environ.get("APP_METRICS_INTERVAL", "60")),
+        inventory_interval=int(os.environ.get("APP_INVENTORY_INTERVAL", "86400")),
+    )
+    return _load_local_override(cfg)
